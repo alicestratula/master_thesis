@@ -1,0 +1,13 @@
+openml
+pandas
+numpy ==1.25.2
+scikit-learn == 1.5.2
+lightgbm
+optuna
+torch
+scipy == 1.13
+pygam
+gower
+gpboost
+properscoring
+tabpfn
