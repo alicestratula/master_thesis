@@ -319,7 +319,6 @@ class EngressionRegressor(_TorchBase):
         batch_size: int = 32,
         seed: int = None,
         device: str = None,
-        standardize: bool = False,
     ):
         super().__init__(batch_size=batch_size, classification=False, learning_rate=learning_rate)
         self.num_epochs = num_epochs
@@ -350,7 +349,6 @@ class EngressionRegressor(_TorchBase):
             batch_size=self.batch_size,
             resblock=self.resblock,
             device=str(self.device),
-            standardize= False
         )
         return self
 
@@ -359,18 +357,8 @@ class EngressionRegressor(_TorchBase):
         Xt = Xt.to(self.device)
         out = self.model.predict(Xt, target="mean")
         return out.cpu().numpy().reshape(-1)
-    
+
     def predict_samples(self, X, sample_size: int = 100):
-   
-        Xt = self._prepare(X)
-        Xt = Xt.to(self.device)
-
-        samples = self.model.sample(Xt, sample_size=sample_size, expand_dim=False)
-        if samples.shape[1] == 1:
-            samples = samples.squeeze(1)
-        return samples.cpu().numpy()
-
-    def predict_samples_manual(self, X, sample_size: int = 100):
         Xt = self._prepare(X)
         Xt = Xt.to(self.device)
         samples = []
@@ -410,7 +398,6 @@ class EngressionClassifier(_TorchBase):
         batch_size: int = 32,
         seed: int = None,
         device: str = None,
-        standardize: bool = False,
     ):
         super().__init__(batch_size=batch_size, classification=True, learning_rate=learning_rate)
         self.num_epochs = num_epochs
@@ -428,7 +415,6 @@ class EngressionClassifier(_TorchBase):
         self.model = engression(
             Xt,
             yt,
-            classification=True,
             lr=self.learning_rate,
             num_epochs=self.num_epochs,
             num_layer=self.num_layer,
@@ -437,7 +423,6 @@ class EngressionClassifier(_TorchBase):
             batch_size=self.batch_size,
             resblock=self.resblock,
             device=str(self.device),
-            standardize=False
         )
         return self
 
@@ -681,240 +666,126 @@ class ResNetClassifier(_TorchBase):
             return np.argmax(probabilities, axis=1)
     
 class FTTrans_Regressor(_TorchBase):
-    def __init__(
-            self,
-            n_blocks: int = 2,
-            d_block_multiplier: int = 128,
-            attention_n_heads: float = 1.0,
-            attention_dropout: float = 0.5,
-            ffn_d_hidden_multiplier: float = 0.5,
-            ffn_dropout:float = 0.5,
-            residual_dropout: float = 0.5,
-            learning_rate: float = 1e-3,
-            weight_decay: float = 0.0,
-            batch_size: int = 32,
-            patience: int = 10,
-            checkpoint_path: str = "checkpoint_fttrans.pt",
-            seed: int = None,
-            n_epochs: int = 100,
-    ):
-        super().__init__(
-            batch_size=batch_size,
-            classification=False,
-            learning_rate=learning_rate,
-            weight_decay=weight_decay,
-            n_epochs=n_epochs,
-            patience=patience,
-            checkpoint_path=checkpoint_path,
-            seed=seed,
-        )
+    def __init__(self, cat_cardinalities: list, **kwargs):
+        super().__init__(**kwargs)
+        self.cat_cardinalities = cat_cardinalities
+        self.params = kwargs
 
-        self.n_blocks = n_blocks
-        self.d_block_multiplier = d_block_multiplier
-        self.attention_n_heads = attention_n_heads
-        self.attention_dropout = attention_dropout
-        self.ffn_d_hidden_multiplier = ffn_d_hidden_multiplier
-        self.ffn_dropout = ffn_dropout
-        self.residual_dropout = residual_dropout
-    def fit(self, X_train, y_train, X_val = None, y_val = None):
+    def _prepare_special_data(self, X, y=None):
+        # Identify column types based on dataframe dtypes
+        cat_cols = X.select_dtypes(include=['category', 'object']).columns
+        num_cols = X.select_dtypes(exclude=['category', 'object']).columns
+
+        x_num = torch.tensor(X[num_cols].values, dtype=torch.float32)
+        x_cat = torch.tensor(X[cat_cols].values, dtype=torch.int64)
+        
+        if y is None:
+            return x_num, x_cat
+        
+        y_tensor = torch.tensor(y, dtype=torch.float32).view(-1, 1)
+        return x_num, x_cat, y_tensor
+
+    def fit(self, X_train, y_train, X_val=None, y_val=None):
         if self.seed is not None:
             torch.manual_seed(self.seed)
-            torch.cuda.manual_seed_all(self.seed)
-            np.random.seed(self.seed)
-
-        # prepare loaders
-        Xt, yt = self._prepare(X_train, y_train)
-        Xt, yt = self._to_device(Xt, yt)
-        train_loader = self._loader(Xt, yt, shuffle=True, drop_last=True)
-
-        if X_val is not None and y_val is not None:
-            Xv, yv = self._prepare(X_val, y_val)
-            Xv, yv = self._to_device(Xv, yv)
-            val_loader = self._loader(Xv, yv, shuffle=False)
-            early_stop = EarlyStopping(self.patience, self.checkpoint_path)
-        else:
-            val_loader = None
-            early_stop = None
-
-        # build model
-        self.d_in = Xt.size(1)
-        d_block = int(self.d_block_multiplier * self.attention_n_heads)
-        ffn_hidden = max(2, int(d_block * self.ffn_d_hidden_multiplier))
-
+        
+        # Build Model
+        n_num_features = len(X_train.select_dtypes(exclude=['category', 'object']).columns)
         self.model = FTTransformer(
-        n_cont_features=self.d_in,
-        cat_cardinalities=[],
-        d_out=1,  # For binary classification, output dimension should be 1
-        n_blocks=self.n_blocks,
-        d_block=d_block,
-        attention_n_heads=self.attention_n_heads,
-        attention_dropout=self.attention_dropout,
-        ffn_d_hidden=ffn_hidden,
-        ffn_d_hidden_multiplier=None,
-        ffn_dropout=self.ffn_dropout,
-        residual_dropout=self.residual_dropout,
+            n_cont_features=n_num_features,
+            cat_cardinalities=self.cat_cardinalities,
+            d_out=1,
+            **self.params
         ).to(self.device)
+        
+        # Prepare DataLoaders
+        x_num_tr, x_cat_tr, y_tr_t = self._to_device(*self._prepare_special_data(X_train, y_train))
+        train_ds = TensorDataset(x_num_tr, x_cat_tr, y_tr_t)
+        train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True, drop_last=True)
+        
+        val_loader = None
+        if X_val is not None and y_val is not None:
+            x_num_v, x_cat_v, y_v_t = self._to_device(*self._prepare_special_data(X_val, y_val))
+            val_ds = TensorDataset(x_num_v, x_cat_v, y_v_t)
+            val_loader = DataLoader(val_ds, batch_size=self.batch_size, shuffle=False)
+            
+        early_stop = EarlyStopping(self.patience, self.checkpoint_path) if val_loader else None
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        criterion = torch.nn.MSELoss()
 
-        # optimizer + loss
-        optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay,
-        )
-        criterion = nn.MSELoss()
+        return train_trans(self.model, criterion, optimizer, self.n_epochs, train_loader, val_loader, early_stop, self.checkpoint_path)
 
-        if val_loader is not None and self.patience:
-            epochs_run = train_trans(
-                self.model,
-                criterion,
-                optimizer,
-                self.n_epochs,
-                train_loader,
-                val_loader,
-                early_stop,
-                self.checkpoint_path,
-            )
-        else:
-            epochs_run = train_trans_no_early_stopping(
-                self.model,
-                criterion,
-                optimizer,
-                self.n_epochs,
-                train_loader,
-            )
-        return epochs_run
-    
     def predict(self, X):
-        Xt = self._prepare(X).to(self.device)
-        loader = self._loader(Xt, torch.zeros_like(Xt[:, :1]), shuffle=False)
-
         self.model.eval()
         preds = []
+        x_num_te, x_cat_te = self._to_device(*self._prepare_special_data(X))
+        test_ds = TensorDataset(x_num_te, x_cat_te)
+        test_loader = DataLoader(test_ds, batch_size=self.batch_size, shuffle=False)
+        
         with torch.no_grad():
-            for xb, _ in loader:
-                out = self.model(xb, None).reshape(-1)
+            for x_num, x_cat in test_loader:
+                out = self.model(x_num, x_cat).view(-1)
                 preds.append(out.cpu().numpy())
         return np.concatenate(preds)
-    
-    def predict_with_uncertainty(self, X, train_loader, sample_size: int = None):
-        mu = self.predict(X)  # numpy array, shape (N,)
-
-        self.model.eval()
-        residuals = []
-        with torch.no_grad():
-            for xb, yb in train_loader:
-                out = self.model(xb.to(self.device), None).view(-1).cpu().numpy()
-                residuals.append(yb.cpu().numpy().ravel() - out)
-        sigma = float(np.std(np.concatenate(residuals), ddof=1))
-
-        return mu, sigma
-    
 
 
 class FTTrans_Classifier(_TorchBase):
-    def __init__(
-        self,
-        num_classes: int,
-        n_blocks: int = 2,
-        d_block_multiplier: int = 128,
-        attention_n_heads: int = 8,  
-        attention_dropout: float = 0.5,
-        ffn_d_hidden_multiplier: float = 0.5,
-        ffn_dropout: float = 0.5,
-        residual_dropout: float = 0.5,
-        learning_rate: float = 1e-3,
-        weight_decay: float = 0.0,
-        batch_size: int = 32,
-        patience: int = 10,
-        checkpoint_path: str = "checkpoint_fttrans.pt",
-        seed: int = None,
-        n_epochs: int = 100,
-    ):
-        super().__init__(
-            batch_size=batch_size,
-            classification=True,
-            learning_rate=learning_rate,
-            weight_decay=weight_decay,
-            n_epochs=n_epochs,
-            patience=patience,
-            checkpoint_path=checkpoint_path,
-            seed=seed,
-        )
-        self.n_blocks = n_blocks
-        self.d_block_multiplier = d_block_multiplier
-        self.attention_n_heads = attention_n_heads
-        self.attention_dropout = attention_dropout
-        self.ffn_d_hidden_multiplier = ffn_d_hidden_multiplier
-        self.ffn_dropout = ffn_dropout
-        self.residual_dropout = residual_dropout
-
+    def __init__(self, num_classes: int, cat_cardinalities: list, **kwargs):
+        super().__init__(classification=True, **kwargs)
         self.num_classes = num_classes
-        self.d_out = self.num_classes
+        self.cat_cardinalities = cat_cardinalities
+        self.params = kwargs
+
+    def _prepare_special_data(self, X, y=None):
+        cat_cols = X.select_dtypes(include=['category', 'object']).columns
+        num_cols = X.select_dtypes(exclude=['category', 'object']).columns
+
+        x_num = torch.tensor(X[num_cols].values, dtype=torch.float32)
+        x_cat = torch.tensor(X[cat_cols].values, dtype=torch.int64)
+        
+        if y is None:
+            return x_num, x_cat
+            
+        y_tensor = torch.tensor(y, dtype=torch.long).view(-1)
+        return x_num, x_cat, y_tensor
 
     def fit(self, X_train, y_train, X_val=None, y_val=None):
-        train_loader, val_loader, _ = self.prepare_data(X_train, y_train, X_val, y_val)
+        if self.seed is not None:
+            torch.manual_seed(self.seed)
 
-        d_block = self.d_block_multiplier * self.attention_n_heads
-
+        n_num_features = len(X_train.select_dtypes(exclude=['category', 'object']).columns)
         self.model = FTTransformer(
-            n_cont_features=self.d_in,
-            cat_cardinalities=[], 
-            d_out=self.d_out,
-            n_blocks=self.n_blocks,
-            d_block=d_block,
-            attention_n_heads=self.attention_n_heads,
-            attention_dropout=self.attention_dropout,
-            ffn_d_hidden=None,
-            ffn_d_hidden_multiplier=self.ffn_d_hidden_multiplier,
-            ffn_dropout=self.ffn_dropout,
-            residual_dropout=self.residual_dropout,
+            n_cont_features=n_num_features,
+            cat_cardinalities=self.cat_cardinalities,
+            d_out=self.num_classes,
+            **self.params
         ).to(self.device)
+        
+        x_num_tr, x_cat_tr, y_tr_t = self._to_device(*self._prepare_special_data(X_train, y_train))
+        train_ds = TensorDataset(x_num_tr, x_cat_tr, y_tr_t)
+        train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True, drop_last=True)
+        
+        val_loader = None
+        if X_val is not None and y_val is not None:
+            x_num_v, x_cat_v, y_v_t = self._to_device(*self._prepare_special_data(X_val, y_val))
+            val_ds = TensorDataset(x_num_v, x_cat_v, y_v_t)
+            val_loader = DataLoader(val_ds, batch_size=self.batch_size, shuffle=False)
+            
+        early_stop = EarlyStopping(self.patience, self.checkpoint_path) if val_loader else None
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        criterion = torch.nn.CrossEntropyLoss()
+        
+        return train_trans(self.model, criterion, optimizer, self.n_epochs, train_loader, val_loader, early_stop, self.checkpoint_path)
 
-        optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        criterion = nn.BCEWithLogitsLoss() if self.d_out == 1 else nn.CrossEntropyLoss()
-
-        if val_loader is not None and self.patience and self.patience > 0:
-            early_stop = EarlyStopping(patience=self.patience, path=self.checkpoint_path)
-            epochs_run = train_trans(
-                self.model,
-                criterion,
-                optimizer,
-                self.n_epochs,
-                train_loader,
-                val_loader,
-                early_stop,
-                self.checkpoint_path,
-            )
-        else:
-            epochs_run = train_trans_no_early_stopping(
-                self.model,
-                criterion,
-                optimizer,
-                self.n_epochs,
-                train_loader,
-            )
-        return epochs_run
-    
     def predict_proba(self, X):
-        Xt = self._prepare(X).to(self.device)
-        dummy = torch.zeros((Xt.size(0), 1), dtype=torch.float32, device=self.device)
-        loader = DataLoader(TensorDataset(Xt, dummy), batch_size=self.batch_size, shuffle=False)
-
         self.model.eval()
-        probs = []
+        probas = []
+        x_num_te, x_cat_te = self._to_device(*self._prepare_special_data(X))
+        test_ds = TensorDataset(x_num_te, x_cat_te)
+        test_loader = DataLoader(test_ds, batch_size=self.batch_size, shuffle=False)
+        
         with torch.no_grad():
-            for xb, _ in loader:
-                logits = self.model(xb, None) 
-                if self.d_out == 1:
-                    probs_batch = torch.sigmoid(logits).cpu().numpy()
-                else:
-                    probs_batch = torch.softmax(logits, dim=1).cpu().numpy()
-                probs.append(probs_batch.reshape(-1, self.d_out))
-        return np.concatenate(probs, axis=0)
-
-    def predict(self, X):
-        probabilities = self.predict_proba(X)
-        if self.d_out == 1:
-            return (probabilities >= 0.5).astype(int).flatten()
-        else:
-            return np.argmax(probabilities, axis=1)
+            for x_num, x_cat in test_loader:
+                logits = self.model(x_num, x_cat)
+                probas.append(torch.softmax(logits, dim=1).cpu().numpy())
+        return np.concatenate(probas)

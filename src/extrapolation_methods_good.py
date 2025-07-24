@@ -24,13 +24,15 @@ def mahalanobis_split(X, quantile=0.8):
     close = distances[distances < threshold].index
     return close, far
 
-def umap_split(X, quantile=0.8, n_components=2, random_state=42):
-    if not isinstance(X, pd.DataFrame):
-        raise TypeError("Input X for umap_split must be a pandas DataFrame.")
-    umap = UMAP(n_components=n_components, random_state=random_state)
-    X_umap = umap.fit_transform(X)
+def umap_split(X_clean, quantile=0.8, n_components=2, random_state=10):
+    X_tmp = X_clean.copy()
+    for c in X_tmp.select_dtypes(include=['category','object','string','bool']).columns:
+        X_tmp[c] = X_tmp[c].astype('category').cat.codes
+    X_tmp = X_tmp.fillna(0)
+    umap = UMAP(n_components=2, random_state=10)
+    X_umap = umap.fit_transform(X_tmp)
     euclidean_dist_matrix = np.mean(euclidean_distances(X_umap), axis=1)
-    distances = pd.Series(euclidean_dist_matrix, index=X.index)
+    distances = pd.Series(euclidean_dist_matrix, index=X_clean.index)
     threshold = np.quantile(distances, quantile)
     far = distances.index[np.where(distances >= threshold)[0]]
     close = distances.index[np.where(distances < threshold)[0]]
@@ -90,23 +92,26 @@ def random_split(X, y, test_size=0.2, val_size=0.2, random_state=10):
     
     return X_train, X_val, y_train, y_val, X_test, y_test
 
-def gower_split(X: pd.DataFrame, quantile: float = 0.8):
-    X_tmp = X.copy()
-    num_cols = X_tmp.select_dtypes(include=[np.number]).columns
-    X_tmp[num_cols] = X_tmp[num_cols].astype(float)
+def gower_split(X: pd.DataFrame, quantile: float = 0.8) -> tuple:
+    X_float = X.copy()
+    X_float = X_float.fillna(0)
+    num_cols = X_float.select_dtypes(include=[np.number]).columns
+    if len(num_cols) == 0:
+        raise ValueError("No numeric columns found in the DataFrame for Gower distance calculation.")
+    X_float[num_cols] = X_float[num_cols].astype(float)
+    gower_matrix = gower.gower_matrix(X_float)
+
     
-    for c in X_tmp.columns.difference(num_cols):
-        X_tmp[c] = X_tmp[c].astype('object')
-
-    D = gower.gower_matrix(X_tmp)
-    avg_dist = D.mean(axis=1)
-    dist_series = pd.Series(avg_dist, index=X.index)
-    thresh = dist_series.quantile(quantile)
-
-    close_idx = dist_series[dist_series <  thresh].index
-    far_idx   = dist_series[dist_series >= thresh].index
+    avg_distances = np.mean(gower_matrix, axis=1)
+    distances = pd.Series(avg_distances, index=X.index)
+    
+    # Determine the threshold based on the provided quantile
+    threshold = distances.quantile(quantile)
+    
+    far_idx = distances[distances >= threshold].index
+    close_idx = distances[distances < threshold].index
+    
     return close_idx, far_idx
-
 
 
 
@@ -166,10 +171,11 @@ def kmedoids_split(
     X_clean: pd.DataFrame,
     n_clusters: int = 20,
     ideal_fraction: float = 0.2,
-    random_state = 0
+    random_state: int = 0
 ) -> tuple[pd.Index, pd.Index]:
     
     X0 = X_clean.copy()
+    X0 = X0.fillna(0)
     for col in X0.select_dtypes(include=['category']):
         X0[col] = X0[col].astype(object)
 
@@ -182,7 +188,7 @@ def kmedoids_split(
         n_clusters=n_clusters,
         metric='precomputed',
         init='k-medoids++',
-        random_state= 0
+        random_state=random_state
     ).fit(D)
 
     ideal_count = len(X0) * ideal_fraction

@@ -39,40 +39,42 @@ class LogisticRegressor:
         # return probability of the positive class
         return self.model.predict_proba(X)[:, 1]
 
-class ConstantPredictor:
 
+class ConstantPredictorTabz:
     def __init__(self):
         self.constant_ = None
-        self.class_ = None
         self.is_classification = False
+        self.classes_ = None   
+        self.class_    = None 
 
     def fit(self, X, y):
         y_arr = np.asarray(y).ravel()
-        self.constant_ = np.mean(y_arr)
-        unique_vals = np.unique(y_arr)
-        if np.issubdtype(y_arr.dtype, np.integer) and len(unique_vals) > 1:
-            self.is_classification = True
-            self.classes_ = np.sort(unique_vals)
-            counts = np.bincount(y_arr.astype(int))
-            self.class_ = np.argmax(counts)
+        unique_vals, counts = np.unique(y_arr, return_counts=True)
 
+        if np.issubdtype(y_arr.dtype, np.integer) and unique_vals.size > 1:
+            self.is_classification = True
+            self.classes_ = unique_vals
+            self.class_ = unique_vals[np.argmax(counts)]
+            self.constant_ = np.mean(y_arr)
         else:
             self.is_classification = False
-            self.class_ = float(unique_vals[0])
+            self.classes_ = None
+            self.class_    = None
+            self.constant_ = np.mean(y_arr)
+
         return self
 
     def predict(self, X):
-        if self.constant_ is None:
-            raise ValueError("ConstantPredictor has not been fitted yet.")
+        if self.constant_ is None and not self.is_classification:
+            raise ValueError("ConstantPredictorTabz has not been fitted yet.")
         try:
             n_samples = X.shape[0]
         except Exception:
             n_samples = int(X)
+
         if self.is_classification:
-            # return majority class for all samples
-            return np.full(n_samples, self.class_, dtype=int)
+            return np.full(n_samples, self.class_, dtype=self.classes_.dtype)
         else:
-            # regression: return constant mean
             return np.full(n_samples, self.constant_, dtype=float)
 
     def predict_proba(self, X):
@@ -82,9 +84,48 @@ class ConstantPredictor:
             n_samples = X.shape[0]
         except Exception:
             n_samples = int(X)
+
         K = len(self.classes_)
         proba = np.zeros((n_samples, K), dtype=float)
-        class_idx = list(self.classes_).index(self.class_)
-        proba[:, class_idx] = 1.0
+        idx = np.flatnonzero(self.classes_ == self.class_)[0]
+        proba[:, idx] = 1.0
         return proba
 
+    
+
+
+class ConstantPredictor:
+
+    def __init__(self):
+        self.constant_         = None
+        self.class_            = None
+        self.is_classification = False
+
+    def fit(self, X, y):
+        y_arr = np.asarray(y).ravel()
+        self.constant_ = np.mean(y_arr)
+
+        unique_vals = np.unique(y_arr)
+        if np.issubdtype(y_arr.dtype, np.integer) and len(unique_vals) > 1:
+            self.is_classification = True
+            counts = np.bincount(y_arr.astype(int))
+            self.class_ = np.argmax(counts)
+        else:
+            self.is_classification = False
+            self.class_ = float(unique_vals[0])
+        return self
+
+    def predict(self, X):
+        if self.constant_ is None:
+            raise ValueError("ConstantPredictor has not been fitted yet.")
+        n = X.shape[0] if hasattr(X, "shape") else int(X)
+        if self.is_classification:
+            return np.full(n, self.class_, dtype=int)
+        else:
+            return np.full(n, self.constant_, dtype=float)
+
+    def predict_proba(self, X):
+        if not self.is_classification:
+            raise AttributeError("predict_proba is only for classification.")
+        n = X.shape[0] if hasattr(X, "shape") else int(X)
+        return np.full(n, self.constant_, dtype=float)

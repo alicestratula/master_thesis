@@ -7,6 +7,7 @@ import pandas as pd
 import lightgbm as lgb
 from pygam import LinearGAM, LogisticGAM
 import gpboost as gpb
+from gpboost import GPModel, GPBoostRegressor, GPBoostClassifier
 from lightgbmlss.distributions.Gaussian import Gaussian
 from lightgbmlss.model import LightGBMLSS
 from sklearn.multiclass import OneVsRestClassifier
@@ -143,7 +144,10 @@ class GAMRegressor:
 
 class GPBoostRegressor:
     def __init__(self, *, cov_function="matern", cov_fct_shape=None,
-                 gp_approx="vecchia", likelihood="gaussian", seed=0, **kw):
+                 gp_approx="vecchia", likelihood="gaussian", trace = True, seed=10, **kw):
+        if cov_function != "matern" and cov_fct_shape is not None:
+            warnings.warn("Cov_fct_shape is only used with the matern kernel, ignore it.")
+            cov_fct_shape = None
         self.cov_function = cov_function
         self.cov_fct_shape = cov_fct_shape
         self.gp_approx     = gp_approx
@@ -154,16 +158,20 @@ class GPBoostRegressor:
 
     def fit(self, X, y):
         intercept = np.ones(len(y))
-        self._model = gpb.GPModel(
-            gp_coords=X,
-            cov_function=self.cov_function,
-            cov_fct_shape=self.cov_fct_shape,
-            gp_approx=self.gp_approx,
-            likelihood=self.likelihood,
-            seed=self.seed,
+
+        gp_kwargs = {
+            "gp_coords": X,
+            "gp_approx": self.gp_approx,
+            "cov_function": self.cov_function,
+            "likelihood": self.likelihood,
+            "seed": self.seed,
             **self.kwargs
-        )
-        self._model.fit(y=y, X=intercept, params={"trace": False})
+        }
+
+        if self.cov_function == "matern" and self.cov_fct_shape is not None:
+            gp_kwargs["cov_fct_shape"] = self.cov_fct_shape
+        self._model = gpb.GPModel(**gp_kwargs)
+        self._model.fit(y=y, X=intercept, params={"trace": True})
         return self
 
     def predict(self, X, return_var=False):
@@ -178,118 +186,74 @@ class GPBoostRegressor:
         if return_var:
             return mu, out["var"]
         return mu
+    def predict_parameters(self, X):
+
+        mu, var = self.predict(X, return_var=True)
+        return {"loc": mu, "scale": np.sqrt(var)}
 
 
 # ——————————————
 # Classification wrappers
 # ——————————————
 
-
-
-class GAMClassifier:
-    def __init__(self, n_splines=25, spline_order=3, lam=0.6, **kwargs):
-        self.n_splines = n_splines
-        self.spline_order = spline_order
-        self.lam = lam
-        self.kwargs = kwargs
-        self._model = None
-        self.classes_ = None
-
-    def fit(self, X, y):
-        X_np = X.to_numpy() if isinstance(X, (pd.DataFrame, pd.Series)) else np.asarray(X)
-        y_np = y.to_numpy().ravel()   if isinstance(y, (pd.DataFrame, pd.Series)) else np.asarray(y).ravel()
-
-        le = LabelEncoder().fit(y_np)
-        y_enc  = le.transform(y_np)
-        self.classes_ = le.classes_
-
-        base_gam = LogisticGAM(
-            n_splines=self.n_splines,
-            spline_order=self.spline_order,
-            lam=self.lam,
-            **self.kwargs
-        )
-        
-        if self.classes_.size > 2:
-            self._model = OneVsRestClassifier(base_gam)
-            fit_y = y_np
-        else:
-            self._model = base_gam
-            fit_y = y_enc
-
-        self._model.fit(X_np, fit_y)
-        return self
-
-    def predict_proba(self, X):
-        if self._model is None:
-            raise RuntimeError("Model has not been fitted yet. Call fit() first.")
-        X_np = X.to_numpy() if isinstance(X, (pd.DataFrame, pd.Series)) else np.asarray(X)
-
-        proba = self._model.predict_proba(X_np)
-        if isinstance(self._model, OneVsRestClassifier):
-            cols = []
-            for est in self._model.estimators_:
-                p1 = est.predict_proba(X_np)        
-                p1 = np.nan_to_num(p1, nan=0.5)
-                cols.append(p1)
-            return np.vstack(cols).T
-
-        p1 = self._model.predict_proba(X_np)         
-        p1 = np.nan_to_num(p1, nan=0.5)
-        return np.vstack([1 - p1, p1]).T
-
-
-    def predict(self, X):
-        probs = self.predict_proba(X)
-        idx = np.argmax(probs, axis=1)
-        return self.classes_[idx]
-
+    
 
 class GPBoostClassifier:
-    """
-    Wrapper around gpboost.GPModel for binary classification
-    using Bernoulli‐logit likelihood.
-    """
     def __init__(self, *, cov_function="matern", cov_fct_shape=None,
-                 gp_approx="vecchia", seed=10, **kwargs):
+                 gp_approx="vecchia", likelihood="bernoulli_logit", matrix_inversion_method = None, trace = True, seed=10, **kw):
+        if cov_function != "matern" and cov_fct_shape is not None:
+            warnings.warn("Cov_fct_shape is only used with the matern kernel, ignore it.")
+            cov_fct_shape = None
         self.cov_function = cov_function
         self.cov_fct_shape = cov_fct_shape
         self.gp_approx     = gp_approx
-        self.likelihood    = "bernoulli_logit"
+        self.likelihood    = likelihood
+        self.matrix_inversion_method = matrix_inversion_method
         self.seed          = seed
-        self.kwargs        = kwargs
+        self.kwargs        = kw
         self._model        = None
 
     def fit(self, X, y):
         intercept = np.ones(len(y))
-        self._model = gpb.GPModel(
-            gp_coords=X,
-            cov_function=self.cov_function,
-            cov_fct_shape=self.cov_fct_shape,
-            gp_approx=self.gp_approx,
-            likelihood=self.likelihood,
-            seed=self.seed,
+        if self.gp_approx == "fitc" and self.likelihood == "bernoulli_logit":
+            method = "cholesky"
+        else:
+            method = self.matrix_inversion_method or "iterative"
+
+        gp_kwargs = {
+            "gp_coords": X,
+            "gp_approx": self.gp_approx,
+            "cov_function": self.cov_function,
+            "likelihood": self.likelihood,
+            "matrix_inversion_method": method,
+            "seed": self.seed,
             **self.kwargs
-        )
-        self._model.fit(y=y, X=intercept, params={"trace": False})
+        }
+
+        if self.cov_function == "matern" and self.cov_fct_shape is not None:
+            gp_kwargs["cov_fct_shape"] = self.cov_fct_shape
+        self._model = gpb.GPModel(**gp_kwargs)
+        self._model.fit(y=y, X=intercept, params={"trace": True})
         return self
 
-    def predict_proba(self, X):
-        intercept = np.ones(X.shape[0])
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        intercept = np.ones((X.shape[0], 1))
         out = self._model.predict(
-            gp_coords_pred=X,
-            X_pred=intercept,
-            predict_var=False,
-            predict_response=True
+            gp_coords_pred = X,
+            X_pred         = intercept,
+            predict_var    = False,
+            predict_response = True
         )
-        # 'mu' is already P(y=1)
-        probs = out["mu"]
-        # fill any NaNs just in case
-        probs = np.nan_to_num(probs, nan=0.5)
-        return probs
+        mu = out["mu"]
+        mu = np.nan_to_num(mu, nan=0.5)
+        return np.vstack([1 - mu, mu]).T
 
-    def predict(self, X):
-        return (self.predict_proba(X) > 0.5).astype(int)
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        proba = self.predict_proba(X)[:, 1]
+        return (proba > 0.5).astype(int)
+
+
+
 
 
 
