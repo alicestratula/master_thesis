@@ -23,9 +23,7 @@ from src.evaluation_metrics import (
 )
 from src.models.Advanced_models import (
     DistributionalRandomForestRegressor,
-    LightGBMLSSRegressor,
-    GAMRegressor, GAMClassifier
-)
+    LightGBMLSSRegressor)
 
 # --- experiment constants ---
 SEED      = 10
@@ -276,7 +274,6 @@ def main():
                     'model':        name,
                     'metric':       metric,
                     'value':        val,
-                    'error':        None
                 })
 
             except Exception as e:
@@ -288,7 +285,6 @@ def main():
                     'model':        name,
                     'metric':       metric,
                     'value':        np.nan, 
-                    'error':        str(e)
                 })
                 continue
 
