@@ -104,7 +104,7 @@ def main():
     
     methods = EXTRAPOLATION_METHODS[cfg["data_type"]]
 
-    MAX_SAMPLES = 10000
+    MAX_SAMPLES = 12000
     if len(X_full) > MAX_SAMPLES:
         X_full, _, y_full, _= train_test_split(
             X_full, y_full, 
