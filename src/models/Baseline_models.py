@@ -37,7 +37,7 @@ class LogisticRegressor:
 
     def predict_proba(self, X):
         # return probability of the positive class
-        return self.model.predict_proba(X)[:, 1]
+        return self.model.predict_proba(X)
 
 
 class ConstantPredictorTabz:

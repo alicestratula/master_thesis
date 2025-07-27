@@ -10,6 +10,9 @@ import pandas as pd
 import torch
 from sklearn.model_selection import train_test_split
 
+import numba
+numba.config.DISABLE_JIT = True
+
 
 # --- your loader & utils ---
 from src.loader import load_dataset_offline, clean_data, standardize_data
@@ -61,7 +64,7 @@ def find_config(suite_id):
 
 
 def split_dataset(split_fn, X, y):
-    """Handle random_split (6 outputs) and other 2-output splitters uniformly."""
+
     out = split_fn(X, y) if split_fn is random_split else split_fn(X)
     if isinstance(out, tuple) and len(out) == 6:
         X_tr, _, y_tr, _, X_te, y_te = out
