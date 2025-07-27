@@ -8,6 +8,7 @@ from properscoring import crps_gaussian, crps_ensemble
 def evaluate_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
     try:
+
         return accuracy_score(y_true, y_pred)
     except Exception as e:
         warnings.warn(f"An error occurred while computing accuracy: {e}")
@@ -16,7 +17,8 @@ def evaluate_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 def evaluate_log_loss(y_true: np.ndarray, y_prob: np.ndarray) -> float:
 
     try:
-        return log_loss(y_true, y_prob)
+        labels = np.unique(y_true)
+        return log_loss(y_true, y_prob, labels=labels)
     except Exception as e:
         warnings.warn(f"An error occurred while computing log loss: {e}")
         return np.nan

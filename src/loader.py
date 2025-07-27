@@ -4,6 +4,7 @@ import pandas as pd
 import re
 import os
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+import logging
 
 #def load_dataset(task_id, max_samples=10000):
 #    task = openml.tasks.get_task(task_id)
@@ -84,8 +85,12 @@ def load_dataset_offline(suite_id, task_id, max_samples=12000, seed=42):
     y_path    = os.path.join(base_dir, subfolder, f"{suite_id}_{task_id}_y.csv")
     cat_path  = os.path.join(base_dir, subfolder, f"{suite_id}_{task_id}_categorical_indicator.npy")
 
-    X = pd.read_csv(X_path)
-    y = pd.read_csv(y_path)
+    if (suite_id, task_id) == (379, 168337):
+        X = pd.read_csv(X_path, nrows = max_samples)
+        y = pd.read_csv(y_path, nrows = max_samples)
+    else:
+        X = pd.read_csv(X_path)
+        y = pd.read_csv(y_path)
 
     categorical_indicator = np.load(cat_path)
     attribute_names       = X.columns.tolist()
@@ -117,6 +122,11 @@ def clean_data(X, y, categorical_indicator, attribute_names, task_type = None):
     upper_tri = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
     high_corr_features = [col for col in upper_tri.columns if any(upper_tri[col] > 0.9)]
     X_clean = X_clean.drop(high_corr_features, axis=1)
+
+    const_cols = [c for c in X_clean.columns if X_clean[c].nunique() <= 1]
+    logging.info(f"Dropping {len(const_cols)} constant cols: {const_cols}")
+    X_clean = X_clean.drop(const_cols, axis=1)
+
 
     X = X.rename(columns=lambda x: re.sub('[^A-Za-z0-9_]+', '', x))
     

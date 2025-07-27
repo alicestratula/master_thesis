@@ -9,7 +9,7 @@ import gower
 from sklearn_extra.cluster import KMedoids
 from sklearn.preprocessing import StandardScaler
 
-from src.loader import prepare_for_split
+from src.loader import prepare_for_split_old
 
 # rpy2 imports for spatial depth
 import rpy2.robjects as robjects
@@ -27,7 +27,7 @@ def mahalanobis_split(X, quantile=0.8):
     return close, far
 
 def umap_split(X_clean, quantile=0.8, n_components=2, random_state=10):
-    X0 = prepare_for_split(X_clean)
+    X0 = prepare_for_split_old(X_clean)
     umap = UMAP(n_components=2, random_state=10)
     X_umap = umap.fit_transform(X0)
     euclidean_dist_matrix = np.mean(euclidean_distances(X_umap), axis=1)
@@ -43,12 +43,13 @@ def kmeans_split(
     n_clusters: int = 20,
     random_state: int = 0
 ) -> tuple[pd.Index, pd.Index]:
-    mean = np.mean(X.values, axis=0)
-    cov = np.cov(X.values.T)
-    inv_cov = np.linalg.inv(cov)
+    X0 = prepare_for_split_old(X)
 
+    mean = np.mean(X0.values, axis=0)
+    cov = np.cov(X0.values.T)
+    inv_cov = np.linalg.inv(cov)
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_scaled = scaler.fit_transform(X0)
 
     kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init="auto")
     kmeans.fit(X_scaled)
@@ -92,7 +93,7 @@ def random_split(X, y, test_size=0.2, val_size=0.2, random_state=10):
     return X_train, X_val, y_train, y_val, X_test, y_test
 
 def gower_split(X: pd.DataFrame, quantile: float = 0.8) -> tuple:
-    X0 =  prepare_for_split(X)
+    X0 =  prepare_for_split_old(X)
     gower_matrix = gower.gower_matrix(X0)
     
     avg_distances = np.mean(gower_matrix, axis=1)
@@ -252,8 +253,7 @@ def spatial_depth_split(
      X: pd.DataFrame,
      quantile: float = 0.2
  ) -> tuple:
-     
-     X0 = prepare_for_split(X)
+     X0 = prepare_for_split_old(X)
 
      pandas2ri.activate()
      ddalpha = importr('ddalpha')
