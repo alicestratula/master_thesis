@@ -2,11 +2,11 @@
 
 import os
 import glob
-import master_thesis.tree_experiment as tree_experiment
+import tree_experiment_tabz as tree_experiment
 from utils_exp import generate_base_command, generate_run_commands
 
 # the list of suite_ids you care about
-suites = [334, 335, 336, 337]
+suites = [379]
 SEED = 10  # or whatever default you like
 result_folder = 'tree_results'
 
