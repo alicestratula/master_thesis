@@ -118,7 +118,7 @@ def main():
     # prepare output
     out_dir = os.path.join(args.result_folder, f"seed_{args.seed}")
     os.makedirs(out_dir, exist_ok=True)
-    out_file = os.path.join(out_dir, f"{args.suite_id}_{args.task_id}_trees.csv")
+    out_file = os.path.join(out_dir, f"{args.suite_id}_{args.task_id}_trees_debug.csv")
 
     records = []
 

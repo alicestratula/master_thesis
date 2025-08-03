@@ -9,7 +9,7 @@ import torch
 import optuna
 from sklearn.model_selection import train_test_split
 from properscoring import crps_gaussian, crps_ensemble
-
+from gpboost.basic import GPBoostError
 from src.loader import (
     load_dataset_offline, clean_data,
     standardize_data, prepare_for_split
@@ -206,19 +206,21 @@ def main():
                 trial.suggest_categorical("cov_fct_shape", [0.5,1.5,2.5])
                 if cov_function=="matern" else None
             )
+            try:
+                model = GPBoostRegressor(
+                    gp_approx     = gp_approx,
+                    cov_function  = cov_function,
+                    cov_fct_shape = cov_fct_shape,
+                    seed          = args.seed,
+                    trace         = False
+                )
+                model.fit(X_train_, y_train_)
 
-            model = GPBoostRegressor(
-                gp_approx     = gp_approx,
-                cov_function  = cov_function,
-                cov_fct_shape = cov_fct_shape,
-                seed          = args.seed,
-                trace         = False
-            )
-            model.fit(X_train_, y_train_)
-
-            preds = model.predict(X_val)
-            return float(np.sqrt(np.mean((y_val - preds)**2)))
-        
+                preds = model.predict(X_val)
+                return float(np.sqrt(np.mean((y_val - preds)**2)))
+            except Exception:
+                return float('inf')
+            
         def obj_logloss_gpboost(trial):
             gp_approx = "vecchia"
             cov_function  = trial.suggest_categorical("cov_function", ["matern","gaussian"])
@@ -297,8 +299,8 @@ def main():
 
                 try:    
                     model.fit(inp_tr, out_tr)
-                except np.linalg.LinAlgError as e:
-                    print(f"Skipping model {name} on split {name_split} because SVD failed on final fit: {e}")
+                except GPBoostError as e:
+                    print(f"Skipping model {name} on split {name_split} is: {e}")
                     continue
                 except RuntimeError as e:
                     if "out of memory" in str(e).lower():
