@@ -254,6 +254,25 @@ class GPBoostClassifier:
 
 
 
+class GPBoostMulticlassClassifier:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self._model = None
+        self._label_encoder = LabelEncoder()
+
+    def fit(self, X, y):
+
+        self._model = OneVsRestClassifier(GPBoostClassifier(**self.kwargs))
+        y_encoded = self._label_encoder.fit_transform(y)
+        self._model.fit(X, y_encoded)
+        return self
+
+    def predict_proba(self, X):
+        return self._model.predict_proba(X)
+    
+    def predict(self, X):
+        proba = self.predict_proba(X)
+        return np.argmax(proba, axis=1)
 
 
 

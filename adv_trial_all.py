@@ -9,7 +9,6 @@ import torch
 import optuna
 from sklearn.model_selection import train_test_split
 from properscoring import crps_gaussian, crps_ensemble
-from gpboost.basic import GPBoostError
 
 from src.loader import (
     load_dataset_offline, clean_data,
@@ -23,7 +22,9 @@ from src.evaluation_metrics import (
     evaluate_crps, evaluate_log_loss, evaluate_accuracy
 )
 from src.models.Advanced_models import (
-    GPBoostRegressor, GPBoostClassifier,GPBoostMulticlassClassifier
+    DistributionalRandomForestRegressor,
+    LightGBMLSSRegressor,
+    GPBoostRegressor, GPBoostClassifier,
 )
 
 # --- experiment constants ---
@@ -36,7 +37,9 @@ SUITE_CONFIG = {
     "regression_numerical":            {"suite_id":336, "task_type":"regression",     "data_type":"numerical"},
     "classification_numerical":        {"suite_id":337, "task_type":"classification", "data_type":"numerical"},
     "regression_numerical_categorical":{"suite_id":335, "task_type":"regression",     "data_type":"numerical_categorical"},
-    "classification_numerical_categorical":{"suite_id":334, "task_type":"classification","data_type":"numerical_categorical"},
+    "classification_numerical_categorical":{
+        "suite_id":334, "task_type":"classification","data_type":"numerical_categorical"
+    },
     "tabzilla": {"suite_id":379, "task_type":"classification",     "data_type":None}
 }
 EXTRAPOLATION_METHODS = {
@@ -94,7 +97,7 @@ def main():
     
     methods = EXTRAPOLATION_METHODS[cfg["data_type"]]
 
-    MAX_SAMPLES = 12000
+    MAX_SAMPLES = 10000
     if len(X_full) > MAX_SAMPLES:
         X_full, _, y_full, _ = train_test_split(
             X_full, y_full,
@@ -112,7 +115,7 @@ def main():
 
     out_dir = os.path.join(args.result_folder, f"seed_{args.seed}")
     os.makedirs(out_dir, exist_ok=True)
-    out_file = os.path.join(out_dir, f"{args.suite_id}_{args.task_id}_gp3.csv")
+    out_file = os.path.join(out_dir, f"{args.suite_id}_{args.task_id}_advanced.csv")
 
     records = []
     quantiles = list(np.random.uniform(0,1,QUANTILE_SAMPLES))
@@ -177,9 +180,35 @@ def main():
         y_tr_arr = y_tr.to_numpy().ravel()
         y_te_arr = y_te.to_numpy().ravel()
 
+        def obj_crps_drf(trial):
+            params = {
+                'num_trees':     trial.suggest_int('num_trees', 100, 500),
+                'mtry':          trial.suggest_int('mtry', 1, X_train_.shape[1]),
+                'min_node_size':trial.suggest_int('min_node_size', 10, 100),
+                'seed':          args.seed
+            }
+            model = DistributionalRandomForestRegressor(**params)
+            model.fit(X_train_, y_train_)
+            y_q = model.predict_quantiles(X_val, quantiles=quantiles)
+            vals = crps_ensemble(y_val, y_q.quantile.squeeze(1))
+            return float(np.mean(vals))
+
+        def obj_crps_lss(trial):
+            params = {
+                'learning_rate':    trial.suggest_float('learning_rate', 1e-4, 0.5, log=True),
+                'n_estimators':     trial.suggest_int('n_estimators', 100, 500),
+                'reg_lambda':       trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
+                'max_depth':        trial.suggest_int('max_depth', 1, 30),
+                'min_child_samples':trial.suggest_int('min_child_samples', 10, 100),
+                'num_leaves':       2**10
+            }
+            model = LightGBMLSSRegressor(**params)
+            model.fit(X_train_.to_numpy(), y_train_)
+            pr = model.predict_parameters(X_val)
+            return float(np.mean(crps_gaussian(y_val, pr['loc'], pr['scale'])))
 
         def obj_crps_gpboost(trial):
-            gp_approx = "full_scale_vecchia"
+            gp_approx   = "full_scale_vecchia"
             cov_function  = trial.suggest_categorical("cov_function", ["matern","gaussian"])
             cov_fct_shape = (
                 trial.suggest_categorical("cov_fct_shape", [0.5,1.5,2.5])
@@ -187,7 +216,7 @@ def main():
             )
             try:
                 model = GPBoostRegressor(
-                    gp_approx     = gp_approx,  
+                    gp_approx     = gp_approx,
                     cov_function  = cov_function,
                     cov_fct_shape = cov_fct_shape,
                     seed          = args.seed,
@@ -201,29 +230,27 @@ def main():
 
 
         def obj_rmse_gpboost(trial):
-            gp_approx = "full_scale_vecchia"
+            gp_approx   = "full_scale_vecchia"
             cov_function  = trial.suggest_categorical("cov_function", ["matern","gaussian"])
             cov_fct_shape = (
                 trial.suggest_categorical("cov_fct_shape", [0.5,1.5,2.5])
                 if cov_function=="matern" else None
             )
-            try:
-                model = GPBoostRegressor(
-                    gp_approx     = gp_approx,
-                    cov_function  = cov_function,
-                    cov_fct_shape = cov_fct_shape,
-                    seed          = args.seed,
-                    trace         = False
-                )
-                model.fit(X_train_, y_train_)
 
-                preds = model.predict(X_val)
-                return float(np.sqrt(np.mean((y_val - preds)**2)))
-            except Exception:
-                return float('inf')
+            model = GPBoostRegressor(
+                gp_approx     = gp_approx,
+                cov_function  = cov_function,
+                cov_fct_shape = cov_fct_shape,
+                seed          = args.seed,
+                trace         = False
+            )
+            model.fit(X_train_, y_train_)
+
+            preds = model.predict(X_val)
+            return float(np.sqrt(np.mean((y_val - preds)**2)))
         
         def obj_logloss_gpboost(trial):
-            gp_approx = "full_scale_vecchia"
+            gp_approx   = "full_scale_vecchia"
             cov_function  = trial.suggest_categorical("cov_function", ["matern","gaussian"])
             cov_fct_shape = (
                 trial.suggest_categorical("cov_fct_shape", [0.5,1.5,2.5])
@@ -245,7 +272,7 @@ def main():
                 return float('inf')
             
         def obj_acc_gpboost(trial):
-            gp_approx = "full_scale_vecchia"
+            gp_approx   = "full_scale_vecchia"
             cov_function  = trial.suggest_categorical("cov_function", ["matern","gaussian"])
             cov_fct_shape = (
                 trial.suggest_categorical("cov_fct_shape", [0.5,1.5,2.5])
@@ -265,62 +292,16 @@ def main():
                 return evaluate_accuracy(y_val, probs)
             except Exception:
                 return 0.0
-        def obj_logloss_gpboost_multi(trial):
-            gp_approx = "full_scale_vecchia"
-            cov_function = trial.suggest_categorical("cov_function", ["matern", "gaussian"])
-            cov_fct_shape = (
-                trial.suggest_categorical("cov_fct_shape", [0.5, 1.5, 2.5])
-                if cov_function == "matern" else None
-            )
-            try:
-                model = GPBoostMulticlassClassifier(
-                    gp_approx=gp_approx,
-                    cov_function=cov_function,
-                    cov_fct_shape=cov_fct_shape,
-                    matrix_inversion_method="iterative",
-                    seed=args.seed,
-                    likelihood="bernoulli_logit",
-                )
-                model.fit(X_train_, y_train_)
-                probs = model.predict_proba(X_val.to_numpy())
-                return evaluate_log_loss(y_val, probs)
-            except Exception:
-                return float('inf')
-
-        def obj_acc_gpboost_multi(trial):
-            gp_approx = "full_scale_vecchia"
-            cov_function = trial.suggest_categorical("cov_function", ["matern", "gaussian"])
-            cov_fct_shape = (
-                trial.suggest_categorical("cov_fct_shape", [0.5, 1.5, 2.5])
-                if cov_function == "matern" else None
-            )
-            try:
-                model = GPBoostMulticlassClassifier(
-                    gp_approx=gp_approx,
-                    cov_function=cov_function,
-                    cov_fct_shape=cov_fct_shape,
-                    matrix_inversion_method="iterative",
-                    seed=args.seed,
-                    likelihood="bernoulli_logit",
-                )
-                model.fit(X_train_, y_train_)
-                preds = model.predict(X_val.to_numpy())
-                return evaluate_accuracy(y_val, preds)
-            except Exception:
-                return 0.0
 
         tasks = []
         if is_reg:
+            tasks.append(("DRF", obj_crps_drf, 'minimize', 'CRPS', DistributionalRandomForestRegressor))
+            tasks.append(("DGBT", obj_crps_lss, 'minimize', 'CRPS', LightGBMLSSRegressor))
             tasks.append(("GPBoost_CRPS", obj_crps_gpboost, 'minimize', 'CRPS', GPBoostRegressor))
             tasks.append(("GPBoost_RMSE", obj_rmse_gpboost, 'minimize', 'RMSE', GPBoostRegressor))
         else:
-            is_binary = len(np.unique(y_tr_arr)) == 2
-            if is_binary:
-                tasks.append(("GPBoost_LogLoss", obj_logloss_gpboost, 'minimize', 'LogLoss', GPBoostClassifier))
-                tasks.append(("GPBoost_Accuracy", obj_acc_gpboost, 'maximize', 'Accuracy', GPBoostClassifier))
-            else:
-                tasks.append(("GPBoost_LogLoss", obj_logloss_gpboost_multi, 'minimize', 'LogLoss', GPBoostMulticlassClassifier))
-                tasks.append(("GPBoost_Accuracy", obj_acc_gpboost_multi, 'maximize', 'Accuracy', GPBoostMulticlassClassifier))
+            tasks.append(("GPBoost_LogLoss", obj_logloss_gpboost, 'minimize', 'LogLoss', GPBoostClassifier))
+            tasks.append(("GPBoost_Accuracy", obj_acc_gpboost, 'maximize', 'Accuracy', GPBoostClassifier))
         
 
         studies = {}
@@ -343,13 +324,13 @@ def main():
                 # Simplified model creation since GAMs are removed
                 model = ModelClass(**best)
 
-                inp_tr = X_tr_p
+                inp_tr = X_tr_p if not isinstance(model, LightGBMLSSRegressor) else X_tr_p.to_numpy()
                 out_tr = y_tr_arr
 
-                try:    
+                try:
                     model.fit(inp_tr, out_tr)
-                except GPBoostError as e:
-                    print(f"Skipping model {name} on split {name_split} is: {e}")
+                except np.linalg.LinAlgError as e:
+                    print(f"Skipping model {name} on split {name_split} because SVD failed on final fit: {e}")
                     continue
                 except RuntimeError as e:
                     if "out of memory" in str(e).lower():
@@ -359,11 +340,15 @@ def main():
                         raise 
 
                 if metric == 'CRPS':
-                    pr = model.predict_parameters(X_te_p)
-                    vals = crps_gaussian(y_te_arr, pr['loc'], pr['scale'])
+                    if isinstance(model, DistributionalRandomForestRegressor):
+                        yq = model.predict_quantiles(X_te_p, quantiles=quantiles)
+                        vals = crps_ensemble(y_te_arr, yq.quantile.squeeze(1))
+                    else:
+                        pr = model.predict_parameters(X_te_p)
+                        vals = crps_gaussian(y_te_arr, pr['loc'], pr['scale'])
                     val = float(np.mean(vals))
                 elif metric == 'RMSE':
-                    preds = model.predict(X_te_p)
+                    preds = model.predict(X_te_p if not isinstance(model, LightGBMLSSRegressor) else X_te_p.to_numpy())
                     val = float(np.sqrt(np.mean((y_te_arr - preds)**2)))
                 elif metric == 'LogLoss':
                     probs = model.predict_proba(X_te_p)
