@@ -107,6 +107,8 @@ def main():
         X_full, y_full, cat_ind, attr_names,
         task_type=cfg["task_type"]
     )
+
+    is_binary = (cfg["task_type"] == "classification" and len(np.unique(y)) == 2)
     if args.task_id in (361082, 361088, 361099) and is_reg:
         y = np.log(y)
 
@@ -314,7 +316,6 @@ def main():
             tasks.append(("GPBoost_CRPS", obj_crps_gpboost, 'minimize', 'CRPS', GPBoostRegressor))
             tasks.append(("GPBoost_RMSE", obj_rmse_gpboost, 'minimize', 'RMSE', GPBoostRegressor))
         else:
-            is_binary = len(np.unique(y_tr_arr)) == 2
             if is_binary:
                 tasks.append(("GPBoost_LogLoss", obj_logloss_gpboost, 'minimize', 'LogLoss', GPBoostClassifier))
                 tasks.append(("GPBoost_Accuracy", obj_acc_gpboost, 'maximize', 'Accuracy', GPBoostClassifier))

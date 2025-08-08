@@ -232,6 +232,10 @@ class GPBoostClassifier:
 
         if self.cov_function == "matern" and self.cov_fct_shape is not None:
             gp_kwargs["cov_fct_shape"] = self.cov_fct_shape
+        
+        n=len(y)
+        if gp_kwargs.get("gp_approx") == "full_scale_vecchia":
+            gp_kwargs["num_ind_points"] = min(self.kwargs.get("num_ind_points", n-1), n-1)
         self._model = gpb.GPModel(**gp_kwargs)
         self._model.fit(y=y, X=intercept, params={"trace": True})
         return self
