@@ -7,12 +7,12 @@ import pandas as pd
 import lightgbm as lgb
 from pygam import LinearGAM, LogisticGAM
 import gpboost as gpb
-from gpboost import GPModel, GPBoostRegressor, GPBoostClassifier
+from gpboost import GPModel
 from lightgbmlss.distributions.Gaussian import Gaussian
 from lightgbmlss.model import LightGBMLSS
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.preprocessing import LabelEncoder
-
+from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 # ——————————————
 # Regression wrappers
 # ——————————————
@@ -155,6 +155,7 @@ class GPBoostRegressor:
         self.seed          = seed
         self.kwargs        = kw
         self._model        = None
+        self.trace         = trace
 
     def fit(self, X, y):
         intercept = np.ones(len(y))
@@ -198,7 +199,7 @@ class GPBoostRegressor:
 
     
 
-class GPBoostClassifier:
+class GPBoostClassifier(BaseEstimator, ClassifierMixin):
     def __init__(self, *, cov_function="matern", cov_fct_shape=None,
                  gp_approx="vecchia", likelihood="bernoulli_logit", matrix_inversion_method = None, trace = True, seed=10, **kw):
         if cov_function != "matern" and cov_fct_shape is not None:
@@ -212,6 +213,7 @@ class GPBoostClassifier:
         self.seed          = seed
         self.kwargs        = kw
         self._model        = None
+        self.trace         = trace
 
     def fit(self, X, y):
         intercept = np.ones(len(y))
@@ -258,7 +260,7 @@ class GPBoostClassifier:
 
 
 
-class GPBoostMulticlassClassifier:
+class GPBoostMulticlassClassifier(BaseEstimator, ClassifierMixin):
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self._model = None
