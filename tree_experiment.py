@@ -266,10 +266,10 @@ def main():
             model = ModelClass(**params)
             model.fit(X_train_.to_numpy(), y_train_)
             proba = model.predict_proba(X_val.to_numpy())
-            if proba.ndim == 1 or proba.shape[1] < 2:
-                probs = np.full(y_val.shape[0], 0.5, dtype=float)
-            else:
-                probs = proba[:, 1]
+            if proba.ndim != 2 or proba.shape[1] < 2:
+                raise ValueError(f"{ModelClass.__name__}.predict_proba returned shape {proba.shape}")
+            probs = proba[:, 1]
+
             return evaluate_log_loss(y_val, probs)
 
         studies = {}
@@ -327,10 +327,9 @@ def main():
                 acc = evaluate_accuracy(y_te_arr, y_pred)
 
                 proba_test = model.predict_proba(X_te_p.to_numpy())
-                if proba_test.ndim == 1 or proba_test.shape[1] < 2:
-                    probs = np.full(y_te_arr.shape[0], 0.5, dtype=float)
-                else:
-                    probs = proba_test[:, 1]
+                if proba_test.ndim != 2 or proba_test.shape[1] < 2:
+                    raise ValueError(f"{ModelClass.__name__}.predict_proba returned shape {proba_test.shape}")
+                probs = proba_test[:, 1]
 
                 ll = evaluate_log_loss(y_te_arr, probs)
             else:
