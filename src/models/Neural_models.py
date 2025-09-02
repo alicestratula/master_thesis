@@ -443,7 +443,7 @@ class EngressionClassifier(_TorchBase):
         Xt = self._prepare(X)
         Xt = Xt.to(self.device)
         raw = self.model.predict(Xt, target="mean")
-        probs = torch.sigmoid(raw)
+        probs = raw
         return probs.cpu().numpy().reshape(-1)
 
     def predict(self, X):
