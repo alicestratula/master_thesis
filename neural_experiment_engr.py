@@ -14,7 +14,7 @@ from src.loader import (
     clean_data,
     standardize_data
 )
-from src.extrapolation_methods import (
+from src.extrapolation_methods_tabz import (
     random_split,
     mahalanobis_split,
     umap_split,

@@ -399,180 +399,237 @@ class EngressionRegressor(_TorchBase):
 
 
 
-class EngressionClassifier(_TorchBase):
-    def __init__(
-        self,
-        learning_rate: float = 1e-4,
-        num_epochs: int = 500,
-        num_layer: int = 3,
-        hidden_dim: int = 128,
-        resblock: bool = False,
-        batch_size: int = 32,
-        seed: int = None,
-        device: str = None
-    ):
-        super().__init__(batch_size=batch_size, classification=True, learning_rate=learning_rate)
-        self.num_epochs = num_epochs
-        self.num_layer   = num_layer
-        self.hidden_dim  = hidden_dim
-        self.resblock    = resblock
-        self.seed        = seed
-        self.device      = torch.device(device) if device else self.device
+    class EngressionClassifier(_TorchBase):
+        def __init__(
+            self,
+            learning_rate: float = 1e-4,
+            num_epochs: int = 500,
+            num_layer: int = 3,
+            hidden_dim: int = 128,
+            resblock: bool = False,
+            batch_size: int = 32,
+            seed: int = None,
+            device: str = None,
+        ):
+            super().__init__(batch_size=batch_size, classification=True, learning_rate=learning_rate)
+            self.num_epochs = num_epochs
+            self.num_layer  = num_layer
+            self.hidden_dim = hidden_dim
+            self.resblock   = resblock
+            self.seed       = seed
+            self.device     = torch.device(device) if device else self.device
 
-    def fit(self, X_train, y_train):
-        Xt, yt = self._prepare(X_train, y_train)
-        yt = yt.float().view(-1, 1)
-        Xt, yt = self._to_device(Xt, yt)
+            self.classes_   = None
+            self.n_classes_ = None
+            self.model      = None          # single model (binary)
+            self.ovr_models = None          # list of models (multiclass)
 
-        self.model = engression(
-            Xt,
-            yt,
-            classification=True,
-            lr=self.learning_rate,
-            num_epochs=self.num_epochs,
-            num_layer=self.num_layer,
-            hidden_dim=self.hidden_dim,
-            noise_dim=self.hidden_dim,
-            batch_size=self.batch_size,
-            resblock=self.resblock,
-            device=str(self.device)
-        )
-        return self
+        def fit(self, X_train, y_train):
+            Xt, _ = self._prepare(X_train, y_train)
+            Xt = Xt.to(self.device)
 
-    def predict_proba(self, X):
-        Xt = self._prepare(X)
-        Xt = Xt.to(self.device)
-        raw = self.model.predict(Xt, target="mean")
-        probs = raw
-        return probs.cpu().numpy().reshape(-1)
+            y_np = (y_train.values if hasattr(y_train, "values") else np.asarray(y_train)).reshape(-1)
+            self.classes_   = np.array(sorted(np.unique(y_np)))
+            self.n_classes_ = int(len(self.classes_))
 
-    def predict(self, X):
-        probs = self.predict_proba(X)
-        return (probs >= 0.5).astype(int)
-    
+            if self.seed is not None:
+                torch.manual_seed(self.seed); torch.cuda.manual_seed_all(self.seed); np.random.seed(self.seed)
 
-# ----- ResNet Regressor -----
-class ResNetRegressor(_TorchBase):
-    def __init__(
-        self,
-        n_blocks: int = 2,
-        d_block: int = 128,
-        d_hidden_multiplier: float = 1.0,
-        dropout1: float = 0.5,
-        dropout2: float = 0.5,
-        learning_rate: float = 1e-3,
-        weight_decay: float = 0.0,
-        batch_size: int = 32,
-        patience: int = 10,
-        checkpoint_path: str = "checkpoint_resnet.pt",
-        seed: int = None,
-        n_epochs: int = 100,
-    ):
-        super().__init__(
-            batch_size=batch_size,
-            classification=False,
-            learning_rate=learning_rate,
-            weight_decay=weight_decay,
-            n_epochs=n_epochs,
-            patience=patience,
-            checkpoint_path=checkpoint_path,
-            seed=seed,
-        )
-        self.n_blocks = n_blocks
-        self.d_block = d_block
-        self.d_hidden_multiplier = d_hidden_multiplier
-        self.dropout1 = dropout1
-        self.dropout2 = dropout2
-        self.model = None
+            if self.n_classes_ == 2:
+                if set(np.unique(y_np)) == {0, 1}:
+                    y01 = y_np.astype(np.float32)
+                else:
+                    y01 = (y_np == self.classes_[1]).astype(np.float32)
+                yt = torch.tensor(y01, dtype=torch.float32, device=self.device).view(-1, 1)
 
-    def fit(self, X_train, y_train, X_val=None, y_val=None):
-        # seed everything for reproducibility
-        if self.seed is not None:
-            torch.manual_seed(self.seed)
-            torch.cuda.manual_seed_all(self.seed)
-            np.random.seed(self.seed)
+                self.model = engression(
+                    Xt, yt,
+                    classification=True,
+                    lr=self.learning_rate,
+                    num_epochs=self.num_epochs,
+                    num_layer=self.num_layer,
+                    hidden_dim=self.hidden_dim,
+                    noise_dim=self.hidden_dim,
+                    batch_size=self.batch_size,
+                    resblock=self.resblock,
+                    device=str(self.device),
+                )
+                self.ovr_models = None
+            else:
+                # one-vs-rest for multiclass
+                self.model = None
+                self.ovr_models = []
+                for cls in self.classes_:
+                    y01 = (y_np == cls).astype(np.float32)
+                    yt  = torch.tensor(y01, dtype=torch.float32, device=self.device).view(-1, 1)
+                    m = engression(
+                        Xt, yt,
+                        classification=True,
+                        lr=self.learning_rate,
+                        num_epochs=self.num_epochs,
+                        num_layer=self.num_layer,
+                        hidden_dim=self.hidden_dim,
+                        noise_dim=self.hidden_dim,
+                        batch_size=self.batch_size,
+                        resblock=self.resblock,
+                        device=str(self.device),
+                    )
+                    self.ovr_models.append(m)
+            return self
 
-        # prepare loaders
-        Xt, yt = self._prepare(X_train, y_train)
-        Xt, yt = self._to_device(Xt, yt)
-        train_loader = self._loader(Xt, yt, shuffle=True)
+        def predict_proba(self, X):
+            Xt = self._prepare(X).to(self.device)
 
-        if X_val is not None and y_val is not None:
-            Xv, yv = self._prepare(X_val, y_val)
-            Xv, yv = self._to_device(Xv, yv)
-            val_loader = self._loader(Xv, yv, shuffle=False)
-            early_stop = EarlyStopping(self.patience, self.checkpoint_path)
-        else:
-            val_loader = None
-            early_stop = None
+            if self.n_classes_ == 2:
+                raw = self.model.predict(Xt, target="mean").view(-1)
+                if (raw.min() < 0) or (raw.max() > 1):
+                    raw = torch.sigmoid(raw)
+                return raw.detach().cpu().numpy().reshape(-1)
 
-        # build model
-        self.d_in = Xt.size(1)
-        self.model = ResNet(
-            d_in=self.d_in,
-            d_out=1,
-            n_blocks=self.n_blocks,
-            d_block=self.d_block,
-            d_hidden=None,
-            d_hidden_multiplier=self.d_hidden_multiplier,
-            dropout1=self.dropout1,
-            dropout2=self.dropout2,
-        ).to(self.device)
+            probs = []
+            with torch.no_grad():
+                for m in self.ovr_models:
+                    r = m.predict(Xt, target="mean").view(-1)
+                    if (r.min() < 0) or (r.max() > 1):
+                        r = torch.sigmoid(r)
+                    probs.append(r)
+            P = torch.stack(probs, dim=1)                       # (N, K)
+            P = P / (P.sum(dim=1, keepdim=True) + 1e-8)
+            return P.detach().cpu().numpy()
 
-        # optimizer + loss
-        optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay,
-        )
-        criterion = nn.MSELoss()
+        def predict(self, X):
+            if self.n_classes_ == 2:
+                p = self.predict_proba(X)
+                return (p >= 0.5).astype(int)
+            P = self.predict_proba(X)
+            idx = np.argmax(P, axis=1)
+            return self.classes_[idx]
 
-        # train
-        if val_loader is not None and self.patience:
-            epochs_run = train(
-                self.model,
-                criterion,
-                optimizer,
-                self.n_epochs,
-                train_loader,
-                val_loader,
-                early_stop,
-                self.checkpoint_path,
+
+        
+
+    # ----- ResNet Regressor -----
+    class ResNetRegressor(_TorchBase):
+        def __init__(
+            self,
+            n_blocks: int = 2,
+            d_block: int = 128,
+            d_hidden_multiplier: float = 1.0,
+            dropout1: float = 0.5,
+            dropout2: float = 0.5,
+            learning_rate: float = 1e-3,
+            weight_decay: float = 0.0,
+            batch_size: int = 32,
+            patience: int = 10,
+            checkpoint_path: str = "checkpoint_resnet.pt",
+            seed: int = None,
+            n_epochs: int = 100,
+        ):
+            super().__init__(
+                batch_size=batch_size,
+                classification=False,
+                learning_rate=learning_rate,
+                weight_decay=weight_decay,
+                n_epochs=n_epochs,
+                patience=patience,
+                checkpoint_path=checkpoint_path,
+                seed=seed,
             )
-        else:
-            epochs_run = train_no_early_stopping(
-                self.model,
-                criterion,
-                optimizer,
-                self.n_epochs,
-                train_loader,
+            self.n_blocks = n_blocks
+            self.d_block = d_block
+            self.d_hidden_multiplier = d_hidden_multiplier
+            self.dropout1 = dropout1
+            self.dropout2 = dropout2
+            self.model = None
+
+        def fit(self, X_train, y_train, X_val=None, y_val=None):
+            # seed everything for reproducibility
+            if self.seed is not None:
+                torch.manual_seed(self.seed)
+                torch.cuda.manual_seed_all(self.seed)
+                np.random.seed(self.seed)
+
+            # prepare loaders
+            Xt, yt = self._prepare(X_train, y_train)
+            Xt, yt = self._to_device(Xt, yt)
+            train_loader = self._loader(Xt, yt, shuffle=True)
+
+            if X_val is not None and y_val is not None:
+                Xv, yv = self._prepare(X_val, y_val)
+                Xv, yv = self._to_device(Xv, yv)
+                val_loader = self._loader(Xv, yv, shuffle=False)
+                early_stop = EarlyStopping(self.patience, self.checkpoint_path)
+            else:
+                val_loader = None
+                early_stop = None
+
+            # build model
+            self.d_in = Xt.size(1)
+            self.model = ResNet(
+                d_in=self.d_in,
+                d_out=1,
+                n_blocks=self.n_blocks,
+                d_block=self.d_block,
+                d_hidden=None,
+                d_hidden_multiplier=self.d_hidden_multiplier,
+                dropout1=self.dropout1,
+                dropout2=self.dropout2,
+            ).to(self.device)
+
+            # optimizer + loss
+            optimizer = optim.Adam(
+                self.model.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay,
             )
-        return epochs_run
+            criterion = nn.MSELoss()
 
-    def predict(self, X):
-        Xt = self._prepare(X).to(self.device)
-        loader = self._loader(Xt, torch.zeros_like(Xt[:, :1]), shuffle=False)
+            # train
+            if val_loader is not None and self.patience:
+                epochs_run = train(
+                    self.model,
+                    criterion,
+                    optimizer,
+                    self.n_epochs,
+                    train_loader,
+                    val_loader,
+                    early_stop,
+                    self.checkpoint_path,
+                )
+            else:
+                epochs_run = train_no_early_stopping(
+                    self.model,
+                    criterion,
+                    optimizer,
+                    self.n_epochs,
+                    train_loader,
+                )
+            return epochs_run
 
-        self.model.eval()
-        preds = []
-        with torch.no_grad():
-            for xb, _ in loader:
-                out = self.model(xb).reshape(-1)
-                preds.append(out.cpu().numpy())
-        return np.concatenate(preds)
-    
-    def predict_with_uncertainty(self, X, train_loader, sample_size: int = None):
-        mu = self.predict(X)  # numpy array, shape (N,)
+        def predict(self, X):
+            Xt = self._prepare(X).to(self.device)
+            loader = self._loader(Xt, torch.zeros_like(Xt[:, :1]), shuffle=False)
 
-        self.model.eval()
-        residuals = []
-        with torch.no_grad():
-            for xb, yb in train_loader:
-                out = self.model(xb.to(self.device)).view(-1).cpu().numpy()
-                residuals.append(yb.cpu().numpy().ravel() - out)
-        sigma = float(np.std(np.concatenate(residuals), ddof=1))
+            self.model.eval()
+            preds = []
+            with torch.no_grad():
+                for xb, _ in loader:
+                    out = self.model(xb).reshape(-1)
+                    preds.append(out.cpu().numpy())
+            return np.concatenate(preds)
+        
+        def predict_with_uncertainty(self, X, train_loader, sample_size: int = None):
+            mu = self.predict(X)  # numpy array, shape (N,)
 
-        return mu, sigma
+            self.model.eval()
+            residuals = []
+            with torch.no_grad():
+                for xb, yb in train_loader:
+                    out = self.model(xb.to(self.device)).view(-1).cpu().numpy()
+                    residuals.append(yb.cpu().numpy().ravel() - out)
+            sigma = float(np.std(np.concatenate(residuals), ddof=1))
+
+            return mu, sigma
 
 
 
