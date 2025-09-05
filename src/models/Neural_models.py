@@ -399,50 +399,70 @@ class EngressionRegressor(_TorchBase):
 
 
 
-    class EngressionClassifier(_TorchBase):
-        def __init__(
-            self,
-            learning_rate: float = 1e-4,
-            num_epochs: int = 500,
-            num_layer: int = 3,
-            hidden_dim: int = 128,
-            resblock: bool = False,
-            batch_size: int = 32,
-            seed: int = None,
-            device: str = None,
-        ):
-            super().__init__(batch_size=batch_size, classification=True, learning_rate=learning_rate)
-            self.num_epochs = num_epochs
-            self.num_layer  = num_layer
-            self.hidden_dim = hidden_dim
-            self.resblock   = resblock
-            self.seed       = seed
-            self.device     = torch.device(device) if device else self.device
+class EngressionClassifier(_TorchBase):
+    def __init__(
+        self,
+        learning_rate: float = 1e-4,
+        num_epochs: int = 500,
+        num_layer: int = 3,
+        hidden_dim: int = 128,
+        resblock: bool = False,
+        batch_size: int = 32,
+        seed: int = None,
+        device: str = None,
+    ):
+        super().__init__(batch_size=batch_size, classification=True, learning_rate=learning_rate)
+        self.num_epochs = num_epochs
+        self.num_layer  = num_layer
+        self.hidden_dim = hidden_dim
+        self.resblock   = resblock
+        self.seed       = seed
+        self.device     = torch.device(device) if device else self.device
 
-            self.classes_   = None
-            self.n_classes_ = None
-            self.model      = None          # single model (binary)
-            self.ovr_models = None          # list of models (multiclass)
+        self.classes_   = None
+        self.n_classes_ = None
+        self.model      = None          # single model (binary)
+        self.ovr_models = None          # list of models (multiclass)
 
-        def fit(self, X_train, y_train):
-            Xt, _ = self._prepare(X_train, y_train)
-            Xt = Xt.to(self.device)
+    def fit(self, X_train, y_train):
+        Xt, _ = self._prepare(X_train, y_train)
+        Xt = Xt.to(self.device)
 
-            y_np = (y_train.values if hasattr(y_train, "values") else np.asarray(y_train)).reshape(-1)
-            self.classes_   = np.array(sorted(np.unique(y_np)))
-            self.n_classes_ = int(len(self.classes_))
+        y_np = (y_train.values if hasattr(y_train, "values") else np.asarray(y_train)).reshape(-1)
+        self.classes_   = np.array(sorted(np.unique(y_np)))
+        self.n_classes_ = int(len(self.classes_))
 
-            if self.seed is not None:
-                torch.manual_seed(self.seed); torch.cuda.manual_seed_all(self.seed); np.random.seed(self.seed)
+        if self.seed is not None:
+            torch.manual_seed(self.seed); torch.cuda.manual_seed_all(self.seed); np.random.seed(self.seed)
 
-            if self.n_classes_ == 2:
-                if set(np.unique(y_np)) == {0, 1}:
-                    y01 = y_np.astype(np.float32)
-                else:
-                    y01 = (y_np == self.classes_[1]).astype(np.float32)
-                yt = torch.tensor(y01, dtype=torch.float32, device=self.device).view(-1, 1)
+        if self.n_classes_ == 2:
+            if set(np.unique(y_np)) == {0, 1}:
+                y01 = y_np.astype(np.float32)
+            else:
+                y01 = (y_np == self.classes_[1]).astype(np.float32)
+            yt = torch.tensor(y01, dtype=torch.float32, device=self.device).view(-1, 1)
 
-                self.model = engression(
+            self.model = engression(
+                Xt, yt,
+                classification=True,
+                lr=self.learning_rate,
+                num_epochs=self.num_epochs,
+                num_layer=self.num_layer,
+                hidden_dim=self.hidden_dim,
+                noise_dim=self.hidden_dim,
+                batch_size=self.batch_size,
+                resblock=self.resblock,
+                device=str(self.device),
+            )
+            self.ovr_models = None
+        else:
+            # one-vs-rest for multiclass
+            self.model = None
+            self.ovr_models = []
+            for cls in self.classes_:
+                y01 = (y_np == cls).astype(np.float32)
+                yt  = torch.tensor(y01, dtype=torch.float32, device=self.device).view(-1, 1)
+                m = engression(
                     Xt, yt,
                     classification=True,
                     lr=self.learning_rate,
@@ -454,56 +474,36 @@ class EngressionRegressor(_TorchBase):
                     resblock=self.resblock,
                     device=str(self.device),
                 )
-                self.ovr_models = None
-            else:
-                # one-vs-rest for multiclass
-                self.model = None
-                self.ovr_models = []
-                for cls in self.classes_:
-                    y01 = (y_np == cls).astype(np.float32)
-                    yt  = torch.tensor(y01, dtype=torch.float32, device=self.device).view(-1, 1)
-                    m = engression(
-                        Xt, yt,
-                        classification=True,
-                        lr=self.learning_rate,
-                        num_epochs=self.num_epochs,
-                        num_layer=self.num_layer,
-                        hidden_dim=self.hidden_dim,
-                        noise_dim=self.hidden_dim,
-                        batch_size=self.batch_size,
-                        resblock=self.resblock,
-                        device=str(self.device),
-                    )
-                    self.ovr_models.append(m)
-            return self
+                self.ovr_models.append(m)
+        return self
 
-        def predict_proba(self, X):
-            Xt = self._prepare(X).to(self.device)
+    def predict_proba(self, X):
+        Xt = self._prepare(X).to(self.device)
 
-            if self.n_classes_ == 2:
-                raw = self.model.predict(Xt, target="mean").view(-1)
-                if (raw.min() < 0) or (raw.max() > 1):
-                    raw = torch.sigmoid(raw)
-                return raw.detach().cpu().numpy().reshape(-1)
+        if self.n_classes_ == 2:
+            raw = self.model.predict(Xt, target="mean").view(-1)
+            if (raw.min() < 0) or (raw.max() > 1):
+                raw = torch.sigmoid(raw)
+            return raw.detach().cpu().numpy().reshape(-1)
 
-            probs = []
-            with torch.no_grad():
-                for m in self.ovr_models:
-                    r = m.predict(Xt, target="mean").view(-1)
-                    if (r.min() < 0) or (r.max() > 1):
-                        r = torch.sigmoid(r)
-                    probs.append(r)
-            P = torch.stack(probs, dim=1)                       # (N, K)
-            P = P / (P.sum(dim=1, keepdim=True) + 1e-8)
-            return P.detach().cpu().numpy()
+        probs = []
+        with torch.no_grad():
+            for m in self.ovr_models:
+                r = m.predict(Xt, target="mean").view(-1)
+                if (r.min() < 0) or (r.max() > 1):
+                    r = torch.sigmoid(r)
+                probs.append(r)
+        P = torch.stack(probs, dim=1)                       # (N, K)
+        P = P / (P.sum(dim=1, keepdim=True) + 1e-8)
+        return P.detach().cpu().numpy()
 
-        def predict(self, X):
-            if self.n_classes_ == 2:
-                p = self.predict_proba(X)
-                return (p >= 0.5).astype(int)
-            P = self.predict_proba(X)
-            idx = np.argmax(P, axis=1)
-            return self.classes_[idx]
+    def predict(self, X):
+        if self.n_classes_ == 2:
+            p = self.predict_proba(X)
+            return (p >= 0.5).astype(int)
+        P = self.predict_proba(X)
+        idx = np.argmax(P, axis=1)
+        return self.classes_[idx]
 
 
         
