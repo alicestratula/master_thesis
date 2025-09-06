@@ -1,103 +1,93 @@
-# Machine Learning Model Comparison for Extrapolation
+# Machine Learning Model Comparison under Extrapolation
 
-This repository contains the implementation and analysis for a master's thesis project comparing various machine learning models under different extrapolation scenarios. The project focuses on evaluating model performance across various extrapolation definitions and includes comprehensive hyperparameter optimization using Optuna.
+## Overview
+This repository contains the official codebase for the thesis *Machine Learning Model Comparison under Extrapolation*.  
+The project provides a large-scale, systematic benchmark of tabular learning models under **interpolation (i.i.d.)** and **extrapolation (out-of-distribution)** regimes.  
 
-## Project Structure
+We evaluate a broad spectrum of models—ranging from simple baselines to foundation models—across nearly 100 OpenML tasks and the **TabZilla benchmark suite (ID 379)**. The framework implements multiple definitions of extrapolation sets, supports both regression and classification tasks, and reports results across complementary metrics.
 
-```
-master_thesis/
-├── analysis/                  # Analysis results and visualizations
-│   └── PICTURES/              # Generated plots
-│       ├── accuracy/          # Accuracy-related visualizations
-│       ├── crps/              # CRPS (Continuous Ranked Probability Score) plots
-│       └── logloss/           # Log loss visualizations
-│
-└── src/                       # Source code
-    ├── models/                # Model implementations
-    │   ├── Advanced_models.py # Advanced model architectures
-    │   ├── Baseline_models.py # Baseline model implementations
-    │   ├── Neural_models.py   # Neural network implementations
-    │   ├── Tree_models.py     # Tree-based models
-    │   └── TabPFN_model.py    # TabPFN model implementation
-    │
-    ├── evaluation_metrics.py  # Custom evaluation metrics
-    ├── extrapolation_methods.py # Different extrapolation techniques
-    ├── loader.py              # Data loading and preprocessing
-    ├── utils.py               # Utility functions
-    └── config_defaults        # Default configuration parameters
-```
+Our goal is to establish a reproducible foundation for evaluating how well models generalize **beyond the training distribution**.
 
-## Features
+---
 
-- **Model Wrappers**: Implementations for various model families including:
-  - Neural Networks
-  - Tree-based models
-  - Baseline models
-  - TabPFN (Tabular Prior-data Fitted Networks)
-  - Advanced model architectures
+## Key Features
+- **Multiple Extrapolation Strategies**  
+  - Random split (baseline)  
+  - Distance-based: Mahalanobis, Gower  
+  - Clustering-based: k-means, k-medoids  
+  - Manifold-based: UMAP  
+  - Depth-based: Spatial depth  
 
-- **Extrapolation Methods**:
-  - Multiple extrapolation definitions
-  - Spatial depth-based methods
-  - Dataset-specific adaptations
+- **Model Families**  
+  - **Baselines**: constant predictor, linear regression, logistic regression  
+  - **Tree ensembles**: Random Forest, LightGBM  
+  - **Neural networks**: MLP, ResNet, FT-Transformer  
+  - **Advanced methods**: Engression, GP, Distributional Random Forest, LightGBMLSS 
+  - **Foundation model**: TabPFN  
 
-- **Hyperparameter Optimization**:
-  - Optuna integration for automated hyperparameter tuning
-  - Configurable search spaces
-  - Parallel optimization support
+- **Diverse Benchmarks**  
+  - OpenML benchmark suites (IDs 334–337) for regression and classification (numerical / mixed)  
+  - **TabZilla benchmark suite (ID 379)**: 36 diverse, deliberately difficult classification datasets  
 
-- **Evaluation**:
-  - Comprehensive metrics (Accuracy, RMSE, Log Loss, CRPS)
-  - Visualization tools
-  - Statistical analysis
+- **Comprehensive Metrics**  
+  - Point prediction: RMSE, Accuracy  
+  - Distributional: CRPS  
+  - Probabilistic calibration: LogLoss  
+  - Degradation analysis from interpolation to extrapolation  
 
-## Requirements
+- **Extensible Framework**  
+  Modular design allows researchers to easily add new models, extrapolation methods, or evaluation metrics.
 
-- Python 3.7+
-- PyTorch
-- scikit-learn
-- Optuna
-- NumPy
-- Pandas
-- Matplotlib/Seaborn for visualization
+---
 
-## Usage
+## Workflow Overview
 
-1. **Data Preparation**:
-   - Place your datasets in the appropriate directory
-   - Configure the data loading parameters in `loader.py`
+1. **Select a benchmark suite**  
+   - `regression_numerical` (OpenML 336)  
+   - `classification_numerical` (OpenML 337)  
+   - `regression_numerical_categorical` (OpenML 335)  
+   - `classification_numerical_categorical` (OpenML 334)  
+   - `tabzilla` (OpenML 379)  
 
-2. **Model Training**:
-   ```bash
-   python src/launchers/train.py --model <model_name> --dataset <dataset_name>
-   ```
+2. **Choose an experiment type**  
+   - `baseline_experiment.py` — linear/logistic/constant models  
+   - `neural_experiment.py` — MLP, ResNet, FT-Transformer  
+   - `tree_experiment.py` — Random Forest, LightGBM  
+   - `adv_trial.py` — Engression, GPBoost  
+   - `TabPFN_experiment.py` — TabPFN foundation model  
 
-3. **Hyperparameter Optimization**:
-   ```bash
-   python src/launchers/optimize.py --model <model_name> --dataset <dataset_name>
-   ```
+3. **Apply extrapolation splits**  
+   The framework automatically selects compatible splitters depending on dataset type:  
+   - **Numerical datasets** → random, Mahalanobis, k-means, UMAP, spatial depth  
+   - **Mixed numerical + categorical datasets** → random, Gower, k-medoids, UMAP  
 
-4. **Evaluation**:
-   ```bash
-   python src/launchers/evaluate.py --model <model_name> --dataset <dataset_name>
-   ```
+   Categorical variables are encoded as category codes for splitters that require numeric input.
 
-## Tabzilla Integration
+4. **Run experiments and collect results**  
+   Metrics, plots, and LaTeX tables are saved in the `analysis/` folder.  
+   These outputs directly generated the figures and tables in the accompanying thesis.
 
-The project includes adaptations for Tabzilla datasets (marked with `_tabz` suffix in filenames) which require additional handling.
+---
 
-## Results
+## TabZilla Experiments
 
-Analysis results and visualizations are stored in the `analysis/` directory, including:
-- Accuracy comparisons
-- RMSE (Root Mean Square Error) plots
-- Log Loss metrics
-- CRPS (Continuous Ranked Probability Score) analysis
+The **TabZilla benchmark suite (ID 379)** provides a deliberately hard and diverse set of classification datasets.  
+To ensure consistency, every experiment script has a dedicated TabZilla counterpart:
 
-## License
+- `baseline_experiment_tabz.py`  
+- `neural_experiment_tabz.py`  
+- `tree_experiment_tabz.py`  
+- `adv_trial_tabz.py`  
+- `TabPFN_experiment_tabz.py`  
 
-[Specify your license here]
+These scripts follow the same workflow as the standard experiments but are adapted for TabZilla’s heterogeneous datasets. This duplication makes it explicit which runs correspond to standard OpenML suites and which to TabZilla.
 
-## Acknowledgments
+---
 
-[Any acknowledgments or references you'd like to include]
+## Installation
+
+Clone the repository and install dependencies:
+```bash
+git clone https://github.com/alicestratula/master_thesis
+cd <project-directory>
+pip install -r requirements.txt
